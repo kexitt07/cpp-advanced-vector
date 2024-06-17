@@ -20,12 +20,14 @@ public:
 
     RawMemory(const RawMemory& other) = delete;
     RawMemory(RawMemory&& other) {
-        *this = std::move(other);
+        this->Swap(other);
     }
 
     RawMemory& operator=(const RawMemory& rhs) = delete;
     RawMemory& operator=(RawMemory&& rhs) {
-        this->Swap(rhs);
+        if (this != &rhs) {
+            this->Swap(rhs);
+        }
         return *this;
     }
 
@@ -130,21 +132,11 @@ public:
     }
 
     void PushBack(const T& value) {
-        if (size_ == this->Capacity()) {
-            Overflow(value);
-        } else {
-            new (&data_[size_]) T(value);
-        }
-        ++size_;
+        EmplaceBack(value);
     }
 
     void PushBack(T&& value) {
-        if (size_ == this->Capacity()) {
-            Overflow(std::move(value));
-        } else {
-            new (&data_[size_]) T(std::move(value));
-        }
-        ++size_;
+        EmplaceBack(std::move(value));        
     }
 
     template <typename... Args>
@@ -192,6 +184,8 @@ public:
 
     template <typename... Args>
     iterator Emplace(const_iterator pos, Args&&... args) {
+        assert(pos >= this->begin() && pos <= this->end());
+
         size_t dist = pos - this->begin();
         iterator position = this->begin() + dist;
 
@@ -231,6 +225,8 @@ public:
     }
 
     iterator Erase(const_iterator pos) {
+        assert(pos >= this->begin() && pos <= this->end());
+
         size_t dist = pos - data_.GetAddress();
         iterator position = data_.GetAddress() + dist;
 
@@ -260,19 +256,7 @@ public:
                 Vector temp(rhs);
                 this->Swap(temp);
             } else {
-                const size_t min_size = std::min(rhs.Size(), size_);
-                for (size_t i = 0; i < min_size; ++i) {
-                    data_[i] = rhs[i];
-                }
-                if (min_size == size_) {
-                    std::uninitialized_copy_n(rhs.data_.GetAddress() + size_
-                                            , rhs.Size() - size_
-                                            , data_.GetAddress() + size_);
-                }
-                if (min_size == rhs.Size() && rhs.Size() != size_) {
-                    std::destroy_n(data_.GetAddress() + rhs.Size(), size_ - rhs.Size());
-                }
-                size_ = rhs.Size();
+                CopyToFilledVector(*this, rhs);
             }
         }
         return *this;
@@ -305,6 +289,27 @@ public:
     }
 
 private:
+    RawMemory<T> data_;
+    size_t size_ = 0;
+
+private:
+    void CopyToFilledVector(Vector& lhs, const Vector& rhs) {
+        const size_t& lhs_size = lhs.size_;
+        const size_t& rhs_size = rhs.Size();
+
+        const size_t min_size = std::min(lhs_size, rhs_size);
+        std::copy(rhs.begin(), rhs.end(), lhs.begin());
+        if (min_size == lhs_size) {
+            std::uninitialized_copy_n(rhs.data_.GetAddress() + lhs_size
+                                    , rhs_size - lhs_size
+                                    , lhs.data_.GetAddress() + lhs_size);
+        }
+        if (min_size == rhs_size && rhs_size != lhs_size) {
+            std::destroy_n(lhs.data_.GetAddress() + rhs_size, lhs_size - rhs_size);
+        }
+        lhs.size_ = rhs_size;
+    }
+
     void MoveOrCopy(T* src, size_t n, T* dest) {
         if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
             std::uninitialized_move_n(src, n, dest);
@@ -318,15 +323,4 @@ private:
         std::destroy_n(data.GetAddress(), n_elems);
         data.Swap(buf);
     }
-
-    template <typename Type>
-    void Overflow(Type&& val) {
-        RawMemory<T> buffer(size_ == 0 ? 1 : size_ * 2);
-        new (&buffer[size_]) T(std::forward<Type>(val));
-
-        MoveOrCopyAndSwap(data_, size_, buffer);
-    }
-
-    RawMemory<T> data_;
-    size_t size_ = 0;
 };
